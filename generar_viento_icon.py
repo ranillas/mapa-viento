@@ -1,48 +1,66 @@
 import os
 import bz2
-import urllib.request
-import re
 import json
+import re
+import requests
 import numpy as np
 import xarray as xr
 
-URL_BASE = "https://opendata.dwd.de/weather/ncm/ICON-EU/grib"
+# URL base oficial del DWD OpenData para ICON-EU Single Level
+URL_BASE = "https://opendata.dwd.de/weather/ncm/ICON-EU/single-level"
 
-def obtener_url_dinamica(var_folder, var_code):
+def crear_sesion_http():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'gzip, deflate'
+    })
+    return session
+
+def obtener_url_dinamica(session, var_code):
     """
-    Escanea el índice HTML de la carpeta del DWD para encontrar el archivo .grib2.bz2 más reciente.
+    Escanea la carpeta de la variable para encontrar el archivo .grib2.bz2 más reciente.
     """
-    corridas = ["00", "06", "12", "18"]
-    # Probamos las corridas desde la más reciente hasta la más antigua
-    for corrida in reversed(corridas):
-        folder_url = f"{URL_BASE}/{corrida}/{var_folder}/"
+    # Probar las subcarpetas de variables estándar en minúsculas/mayúsculas
+    carpetas_posibles = [var_code.lower(), var_code.upper()]
+    
+    for carp in carpetas_posibles:
+        url_folder = f"{URL_BASE}/{carp}/"
         try:
-            print(f"Buscando archivos en: {folder_url}")
-            req = urllib.request.Request(folder_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as resp:
-                html = resp.read().decode('utf-8')
-                
-                # Buscar todos los enlaces a archivos .grib2.bz2 con el código de variable
-                patron = r'href=["\']([^"\']+\.' + re.escape(var_code) + r'\.grib2\.bz2)["\']'
-                archivos = re.findall(patron, html, re.IGNORECASE)
+            print(f"Escanando indice DWD: {url_folder}")
+            resp = session.get(url_folder, timeout=15)
+            if resp.status_code == 200:
+                # Extraer enlaces a archivos .grib2.bz2
+                patron = r'href=["\']([^"\']+\.grib2\.bz2)["\']'
+                archivos = re.findall(patron, resp.text, re.IGNORECASE)
                 
                 if archivos:
-                    # Seleccionamos el último archivo disponible de la lista
-                    archivo_encontrado = archivos[-1]
-                    url_completa = folder_url + archivo_encontrado
-                    print(f"  -> ¡Archivo encontrado en corrida {corrida}!: {archivo_encontrado}")
+                    # Filtramos por el paso de prediccion inicial (000) o tomamos el mas reciente
+                    archivos_filtrados = [f for f in archivos if "_000_" in f or "_00_" in f]
+                    archivo_final = archivos_filtrados[-1] if archivos_filtrados else archivos[-1]
+                    
+                    url_completa = url_folder + archivo_final
+                    print(f"  -> ¡Encontrado archivo valido!: {archivo_final}")
                     return url_completa
         except Exception as e:
-            print(f"  -> Error escaneando corrida {corrida}: {e}")
+            print(f"  -> Error buscando en {url_folder}: {e}")
             
-    raise RuntimeError(f"No se pudo encontrar ningún archivo válido para la variable {var_code}")
+    # Si la ruta alternativa ncm no responde, fallback a la ruta global opendata
+    url_fallback = f"https://opendata.dwd.de/weather/weather_reports/grib/{var_code.lower()}.grib2.bz2"
+    print(f"  -> Usando fallback directo: {url_fallback}")
+    return url_fallback
 
-def descargar_y_descomprimir(url, file_bz2, file_grib):
+def descargar_y_descomprimir(session, url, file_bz2, file_grib):
     print(f"Descargando {url}...")
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req) as response, open(file_bz2, 'wb') as out_file:
-        out_file.write(response.read())
+    resp = session.get(url, stream=True, timeout=60)
+    resp.raise_for_status()
     
+    with open(file_bz2, 'wb') as f:
+        for chunk in resp.iter_content(chunk_size=65536):
+            if chunk:
+                f.write(chunk)
+                
     print(f"Descomprimiendo {file_bz2} -> {file_grib}...")
     with bz2.BZ2File(file_bz2, 'rb') as source, open(file_grib, 'wb') as target:
         target.write(source.read())
@@ -55,12 +73,13 @@ FILE_V_GRIB = "v10.grib2"
 JSON_OUTPUT = "viento-espana.json"
 
 try:
-    # Escanear y obtener las URLs dinámicas reales
-    url_u = obtener_url_dinamica("u10", "u10")
-    url_v = obtener_url_dinamica("v10", "v10")
+    session = crear_sesion_http()
 
-    descargar_y_descomprimir(url_u, "u10.grib2.bz2", FILE_U_GRIB)
-    descargar_y_descomprimir(url_v, "v10.grib2.bz2", FILE_V_GRIB)
+    url_u = obtener_url_dinamica(session, "u10")
+    url_v = obtener_url_dinamica(session, "v10")
+
+    descargar_y_descomprimir(session, url_u, "u10.grib2.bz2", FILE_U_GRIB)
+    descargar_y_descomprimir(session, url_v, "v10.grib2.bz2", FILE_V_GRIB)
 
     print("Procesando datasets con Xarray / cfgrib...")
     ds_u = xr.open_dataset(FILE_U_GRIB, engine='cfgrib')
@@ -84,7 +103,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 2,  # Componente U (Este-Oeste)
+                "parameterNumber": 2,  # Componente U
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -101,7 +120,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 3,  # Componente V (Norte-Sur)
+                "parameterNumber": 3,  # Componente V
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -129,7 +148,4 @@ try:
 
 except Exception as e:
     print(f"❌ Error durante la ejecución: {e}")
-    raise e
-except Exception as e:
-    print(f"❌ Error durante la ejecucion: {e}")
     raise e
