@@ -2,9 +2,8 @@ name: Actualizar Datos de Viento ICON-EU
 
 on:
   schedule:
-    # Se ejecuta automáticamente cada 6 horas
     - cron: '30 */6 * * *'
-  workflow_dispatch: # Permite probarlo manualmente
+  workflow_dispatch:
 
 jobs:
   update-wind:
@@ -22,7 +21,7 @@ jobs:
     - name: Instalar librerías de sistema y Python
       run: |
         sudo apt-get update
-        sudo apt-get install -y libeccodes-dev
+        sudo apt-get install -y libeccodes-dev libeccodes-tools
         pip install --upgrade pip
         pip install xarray cfgrib eccodes numpy
 
