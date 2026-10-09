@@ -33,3 +33,4 @@ jobs:
         git add viento-espana.json
         git status
         git diff-index --quiet HEAD || (git commit -m "bot: Actualización automática viento ICON-EU" && git push)
+
