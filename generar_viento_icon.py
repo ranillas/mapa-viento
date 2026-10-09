@@ -1,26 +1,41 @@
 import os
 import bz2
 import urllib.request
+import re
 import json
 import numpy as np
 import xarray as xr
 
 URL_BASE = "https://opendata.dwd.de/weather/ncm/ICON-EU/grib"
 
-def obtener_url_valida(tipo_var):
+def obtener_url_dinamica(var_folder, var_code):
+    """
+    Escanea el índice HTML de la carpeta del DWD para encontrar el archivo .grib2.bz2 más reciente.
+    """
     corridas = ["00", "06", "12", "18"]
-    for corrida in corridas:
-        url = f"{URL_BASE}/{corrida}/{tipo_var}/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_{tipo_var}.grib2.bz2"
+    # Probamos las corridas desde la más reciente hasta la más antigua
+    for corrida in reversed(corridas):
+        folder_url = f"{URL_BASE}/{corrida}/{var_folder}/"
         try:
-            print(f"Probando conexion con: {url}")
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            print(f"Buscando archivos en: {folder_url}")
+            req = urllib.request.Request(folder_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as resp:
-                if resp.status == 200:
-                    print(f"  -> ¡Encontrado archivo valido en corrida {corrida}!")
-                    return url
+                html = resp.read().decode('utf-8')
+                
+                # Buscar todos los enlaces a archivos .grib2.bz2 con el código de variable
+                patron = r'href=["\']([^"\']+\.' + re.escape(var_code) + r'\.grib2\.bz2)["\']'
+                archivos = re.findall(patron, html, re.IGNORECASE)
+                
+                if archivos:
+                    # Seleccionamos el último archivo disponible de la lista
+                    archivo_encontrado = archivos[-1]
+                    url_completa = folder_url + archivo_encontrado
+                    print(f"  -> ¡Archivo encontrado en corrida {corrida}!: {archivo_encontrado}")
+                    return url_completa
         except Exception as e:
-            print(f"  -> No disponible corrida {corrida}: {e}")
-    raise RuntimeError(f"No se pudo encontrar ninguna URL funcional para {tipo_var}")
+            print(f"  -> Error escaneando corrida {corrida}: {e}")
+            
+    raise RuntimeError(f"No se pudo encontrar ningún archivo válido para la variable {var_code}")
 
 def descargar_y_descomprimir(url, file_bz2, file_grib):
     print(f"Descargando {url}...")
@@ -40,8 +55,9 @@ FILE_V_GRIB = "v10.grib2"
 JSON_OUTPUT = "viento-espana.json"
 
 try:
-    url_u = obtener_url_valida("u10")
-    url_v = obtener_url_valida("v10")
+    # Escanear y obtener las URLs dinámicas reales
+    url_u = obtener_url_dinamica("u10", "u10")
+    url_v = obtener_url_dinamica("v10", "v10")
 
     descargar_y_descomprimir(url_u, "u10.grib2.bz2", FILE_U_GRIB)
     descargar_y_descomprimir(url_v, "v10.grib2.bz2", FILE_V_GRIB)
@@ -50,6 +66,7 @@ try:
     ds_u = xr.open_dataset(FILE_U_GRIB, engine='cfgrib')
     ds_v = xr.open_dataset(FILE_V_GRIB, engine='cfgrib')
 
+    # Recorte para España y Península Ibérica
     lat_bounds = (35.0, 44.5)
     lon_bounds = (-10.0, 4.5)
 
@@ -67,7 +84,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 2,
+                "parameterNumber": 2,  # Componente U (Este-Oeste)
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -84,7 +101,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 3,
+                "parameterNumber": 3,  # Componente V (Norte-Sur)
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -108,8 +125,11 @@ try:
         if os.path.exists(f):
             os.remove(f)
 
-    print("✅ ¡Exito! Archivo viento-espana.json generado.")
+    print("✅ ¡Éxito! Archivo viento-espana.json generado correctamente.")
 
+except Exception as e:
+    print(f"❌ Error durante la ejecución: {e}")
+    raise e
 except Exception as e:
     print(f"❌ Error durante la ejecucion: {e}")
     raise e
