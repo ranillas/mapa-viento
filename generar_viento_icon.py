@@ -6,7 +6,6 @@ import requests
 import numpy as np
 import xarray as xr
 
-# Ruta oficial confirmada de predicción numérica de ICON-EU
 URL_BASE_NWP = "https://opendata.dwd.de/weather/nwp/icon-eu/grib"
 
 def crear_sesion_http():
@@ -18,24 +17,18 @@ def crear_sesion_http():
     return session
 
 def obtener_url_dinamica(session, var_folder):
-    """
-    Escanea las corridas de la ruta /weather/nwp/icon-eu/grib/ para encontrar el .grib2.bz2 más reciente.
-    """
     corridas = ["00", "03", "06", "09", "12", "15", "18", "21"]
     
-    # Probamos desde la corrida más reciente hacia la más antigua
     for corrida in reversed(corridas):
         url_folder = f"{URL_BASE_NWP}/{corrida}/{var_folder}/"
         try:
             print(f"Escaneando carpeta DWD: {url_folder}")
             resp = session.get(url_folder, timeout=10)
             if resp.status_code == 200:
-                # Buscar enlaces a archivos .grib2.bz2
                 patron = r'href=["\']([^"\']+\.grib2\.bz2)["\']'
                 archivos = re.findall(patron, resp.text, re.IGNORECASE)
                 
                 if archivos:
-                    # Nos quedamos con el primer paso de predicción disponible (_000_) o el primero de la lista
                     archivos_paso0 = [f for f in archivos if "_000_" in f]
                     archivo_elegido = archivos_paso0[0] if archivos_paso0 else archivos[0]
                     
@@ -71,7 +64,6 @@ JSON_OUTPUT = "viento-espana.json"
 try:
     session = crear_sesion_http()
 
-    # 'u_10m' y 'v_10m' son los nombres exactos de carpeta en el servidor DWD NWP
     url_u = obtener_url_dinamica(session, "u_10m")
     url_v = obtener_url_dinamica(session, "v_10m")
 
@@ -82,12 +74,22 @@ try:
     ds_u = xr.open_dataset(FILE_U_GRIB, engine='cfgrib')
     ds_v = xr.open_dataset(FILE_V_GRIB, engine='cfgrib')
 
-    # Recorte para España y Península Ibérica
-    lat_bounds = (35.0, 44.5)
-    lon_bounds = (-10.0, 4.5)
+    # Identificar el nombre exacto de la variable dentro del dataset (u10, u, ugrd, etc.)
+    var_u_name = list(ds_u.data_vars.keys())[0]
+    var_v_name = list(ds_v.data_vars.keys())[0]
 
-    u_sub = ds_u['u10'].sel(latitude=slice(lat_bounds[1], lat_bounds[0]), longitude=slice(lon_bounds[0], lon_bounds[1]))
-    v_sub = ds_v['v10'].sel(latitude=slice(lat_bounds[1], lat_bounds[0]), longitude=slice(lon_bounds[0], lon_bounds[1]))
+    # Recorte para España y Península Ibérica
+    # Filtramos usando coordenadas lógicas en lugar de slice directo para evitar errores de ordenación ascendente/descendente
+    u_sub = ds_u[var_u_name].where(
+        (ds_u.latitude >= 35.0) & (ds_u.latitude <= 44.5) &
+        (ds_u.longitude >= -10.0) & (ds_u.longitude <= 4.5),
+        drop=True
+    )
+    v_sub = ds_v[var_v_name].where(
+        (ds_v.latitude >= 35.0) & (ds_v.latitude <= 44.5) &
+        (ds_v.longitude >= -10.0) & (ds_v.longitude <= 4.5),
+        drop=True
+    )
 
     lats = u_sub.latitude.values
     lons = u_sub.longitude.values
@@ -109,8 +111,8 @@ try:
                 "la1": float(lats.max()),
                 "lo2": float(lons.max()),
                 "la2": float(lats.min()),
-                "dx": float(abs(lons[1] - lons[0])),
-                "dy": float(abs(lats[1] - lats[0]))
+                "dx": float(abs(lons[1] - lons[0])) if len(lons) > 1 else 0.0625,
+                "dy": float(abs(lats[1] - lats[0])) if len(lats) > 1 else 0.0625
             },
             "data": np.nan_to_num(u_vals).flatten().tolist()
         },
@@ -126,8 +128,8 @@ try:
                 "la1": float(lats.max()),
                 "lo2": float(lons.max()),
                 "la2": float(lats.min()),
-                "dx": float(abs(lons[1] - lons[0])),
-                "dy": float(abs(lats[1] - lats[0]))
+                "dx": float(abs(lons[1] - lons[0])) if len(lons) > 1 else 0.0625,
+                "dy": float(abs(lats[1] - lats[0])) if len(lats) > 1 else 0.0625
             },
             "data": np.nan_to_num(v_vals).flatten().tolist()
         }
