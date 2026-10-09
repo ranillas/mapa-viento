@@ -5,11 +5,9 @@ import json
 import numpy as np
 import xarray as xr
 
-# URLs base del modelo ICON-EU en el servidor de OpenData del DWD
 URL_BASE = "https://opendata.dwd.de/weather/ncm/ICON-EU/grib"
 
 def obtener_url_valida(tipo_var):
-    # Probar con las corridas más habituales: 00 y 06
     corridas = ["00", "06", "12", "18"]
     for corrida in corridas:
         url = f"{URL_BASE}/{corrida}/{tipo_var}/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_{tipo_var}.grib2.bz2"
@@ -52,7 +50,6 @@ try:
     ds_u = xr.open_dataset(FILE_U_GRIB, engine='cfgrib')
     ds_v = xr.open_dataset(FILE_V_GRIB, engine='cfgrib')
 
-    # Coordenadas ajustadas para España/Península Ibérica
     lat_bounds = (35.0, 44.5)
     lon_bounds = (-10.0, 4.5)
 
@@ -70,7 +67,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 2,  # U
+                "parameterNumber": 2,
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -87,7 +84,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 3,  # V
+                "parameterNumber": 3,
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
