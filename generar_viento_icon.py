@@ -6,50 +6,46 @@ import requests
 import numpy as np
 import xarray as xr
 
-# URL base oficial del DWD OpenData para ICON-EU Single Level
-URL_BASE = "https://opendata.dwd.de/weather/ncm/ICON-EU/single-level"
+# Ruta oficial confirmada de predicción numérica de ICON-EU
+URL_BASE_NWP = "https://opendata.dwd.de/weather/nwp/icon-eu/grib"
 
 def crear_sesion_http():
     session = requests.Session()
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': '*/*',
-        'Accept-Encoding': 'gzip, deflate'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept': '*/*'
     })
     return session
 
-def obtener_url_dinamica(session, var_code):
+def obtener_url_dinamica(session, var_folder):
     """
-    Escanea la carpeta de la variable para encontrar el archivo .grib2.bz2 más reciente.
+    Escanea las corridas de la ruta /weather/nwp/icon-eu/grib/ para encontrar el .grib2.bz2 más reciente.
     """
-    # Probar las subcarpetas de variables estándar en minúsculas/mayúsculas
-    carpetas_posibles = [var_code.lower(), var_code.upper()]
+    corridas = ["00", "03", "06", "09", "12", "15", "18", "21"]
     
-    for carp in carpetas_posibles:
-        url_folder = f"{URL_BASE}/{carp}/"
+    # Probamos desde la corrida más reciente hacia la más antigua
+    for corrida in reversed(corridas):
+        url_folder = f"{URL_BASE_NWP}/{corrida}/{var_folder}/"
         try:
-            print(f"Escanando indice DWD: {url_folder}")
-            resp = session.get(url_folder, timeout=15)
+            print(f"Escaneando carpeta DWD: {url_folder}")
+            resp = session.get(url_folder, timeout=10)
             if resp.status_code == 200:
-                # Extraer enlaces a archivos .grib2.bz2
+                # Buscar enlaces a archivos .grib2.bz2
                 patron = r'href=["\']([^"\']+\.grib2\.bz2)["\']'
                 archivos = re.findall(patron, resp.text, re.IGNORECASE)
                 
                 if archivos:
-                    # Filtramos por el paso de prediccion inicial (000) o tomamos el mas reciente
-                    archivos_filtrados = [f for f in archivos if "_000_" in f or "_00_" in f]
-                    archivo_final = archivos_filtrados[-1] if archivos_filtrados else archivos[-1]
+                    # Nos quedamos con el primer paso de predicción disponible (_000_) o el primero de la lista
+                    archivos_paso0 = [f for f in archivos if "_000_" in f]
+                    archivo_elegido = archivos_paso0[0] if archivos_paso0 else archivos[0]
                     
-                    url_completa = url_folder + archivo_final
-                    print(f"  -> ¡Encontrado archivo valido!: {archivo_final}")
+                    url_completa = url_folder + archivo_elegido
+                    print(f"  -> ¡Archivo encontrado!: {archivo_elegido}")
                     return url_completa
         except Exception as e:
-            print(f"  -> Error buscando en {url_folder}: {e}")
+            print(f"  -> Error buscando en corrida {corrida}: {e}")
             
-    # Si la ruta alternativa ncm no responde, fallback a la ruta global opendata
-    url_fallback = f"https://opendata.dwd.de/weather/weather_reports/grib/{var_code.lower()}.grib2.bz2"
-    print(f"  -> Usando fallback directo: {url_fallback}")
-    return url_fallback
+    raise RuntimeError(f"No se pudo encontrar ningún archivo válido en DWD para {var_folder}")
 
 def descargar_y_descomprimir(session, url, file_bz2, file_grib):
     print(f"Descargando {url}...")
@@ -75,8 +71,9 @@ JSON_OUTPUT = "viento-espana.json"
 try:
     session = crear_sesion_http()
 
-    url_u = obtener_url_dinamica(session, "u10")
-    url_v = obtener_url_dinamica(session, "v10")
+    # 'u_10m' y 'v_10m' son los nombres exactos de carpeta en el servidor DWD NWP
+    url_u = obtener_url_dinamica(session, "u_10m")
+    url_v = obtener_url_dinamica(session, "v_10m")
 
     descargar_y_descomprimir(session, url_u, "u10.grib2.bz2", FILE_U_GRIB)
     descargar_y_descomprimir(session, url_v, "v10.grib2.bz2", FILE_V_GRIB)
