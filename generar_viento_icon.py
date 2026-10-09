@@ -1,62 +1,58 @@
 import os
 import bz2
 import urllib.request
-import xarray as xr
 import json
 import numpy as np
+import xarray as xr
 
-# URLs base con fallbacks para garantizar disponibilidad de archivos en el DWD
-URLS_U = [
-    "https://opendata.dwd.de/weather/ncm/ICON-EU/grib/00/u10/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_u10.grib2.bz2",
-    "https://opendata.dwd.de/weather/ncm/ICON-EU/grib/06/u10/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_u10.grib2.bz2"
-]
+# URLs base del modelo ICON-EU en el servidor de OpenData del DWD
+URL_BASE = "https://opendata.dwd.de/weather/ncm/ICON-EU/grib"
 
-URLS_V = [
-    "https://opendata.dwd.de/weather/ncm/ICON-EU/grib/00/v10/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_v10.grib2.bz2",
-    "https://opendata.dwd.de/weather/ncm/ICON-EU/grib/06/v10/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_v10.grib2.bz2"
-]
+def obtener_url_valida(tipo_var):
+    # Probar con las corridas más habituales: 00 y 06
+    corridas = ["00", "06", "12", "18"]
+    for corrida in corridas:
+        url = f"{URL_BASE}/{corrida}/{tipo_var}/icon-eu_europe_regular-lat-lon_single-level_latest_000_10_{tipo_var}.grib2.bz2"
+        try:
+            print(f"Probando conexion con: {url}")
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as resp:
+                if resp.status == 200:
+                    print(f"  -> ¡Encontrado archivo valido en corrida {corrida}!")
+                    return url
+        except Exception as e:
+            print(f"  -> No disponible corrida {corrida}: {e}")
+    raise RuntimeError(f"No se pudo encontrar ninguna URL funcional para {tipo_var}")
 
-FILE_U_BZ2 = "u10.grib2.bz2"
-FILE_V_BZ2 = "v10.grib2.bz2"
+def descargar_y_descomprimir(url, file_bz2, file_grib):
+    print(f"Descargando {url}...")
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req) as response, open(file_bz2, 'wb') as out_file:
+        out_file.write(response.read())
+    
+    print(f"Descomprimiendo {file_bz2} -> {file_grib}...")
+    with bz2.BZ2File(file_bz2, 'rb') as source, open(file_grib, 'wb') as target:
+        target.write(source.read())
+    
+    if os.path.exists(file_bz2):
+        os.remove(file_bz2)
+
 FILE_U_GRIB = "u10.grib2"
 FILE_V_GRIB = "v10.grib2"
 JSON_OUTPUT = "viento-espana.json"
 
-def descargar_con_fallback(urls, file_bz2, file_grib):
-    exito = False
-    for url in urls:
-        try:
-            print(f"Probando descarga desde: {url}")
-            # Añadimos un User-Agent para evitar bloqueos HTTP 403/400
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response, open(file_bz2, 'wb') as out_file:
-                out_file.write(response.read())
-            
-            print(f"Descomprimiendo {file_bz2}...")
-            with bz2.BZ2File(file_bz2, 'rb') as source, open(file_grib, 'wb') as target:
-                target.write(source.read())
-            
-            if os.path.exists(file_bz2):
-                os.remove(file_bz2)
-            exito = True
-            break
-        except Exception as err:
-            print(f"⚠️ Falló descarga de {url}: {err}")
-            if os.path.exists(file_bz2):
-                os.remove(file_bz2)
-    
-    if not exito:
-        raise RuntimeError("No se pudo descargar el archivo de viento desde ninguna de las URLs de origen.")
-
 try:
-    descargar_con_fallback(URLS_U, FILE_U_BZ2, FILE_U_GRIB)
-    descargar_con_fallback(URLS_V, FILE_V_BZ2, FILE_V_GRIB)
+    url_u = obtener_url_valida("u10")
+    url_v = obtener_url_valida("v10")
 
-    print("Procesando mallas de viento con Xarray...")
+    descargar_y_descomprimir(url_u, "u10.grib2.bz2", FILE_U_GRIB)
+    descargar_y_descomprimir(url_v, "v10.grib2.bz2", FILE_V_GRIB)
+
+    print("Procesando datasets con Xarray / cfgrib...")
     ds_u = xr.open_dataset(FILE_U_GRIB, engine='cfgrib')
     ds_v = xr.open_dataset(FILE_V_GRIB, engine='cfgrib')
 
-    # Recorte para España y Península Ibérica
+    # Coordenadas ajustadas para España/Península Ibérica
     lat_bounds = (35.0, 44.5)
     lon_bounds = (-10.0, 4.5)
 
@@ -74,7 +70,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 2,  # Componente U
+                "parameterNumber": 2,  # U
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -91,7 +87,7 @@ try:
         {
             "header": {
                 "parameterCategory": 2,
-                "parameterNumber": 3,  # Componente V
+                "parameterNumber": 3,  # V
                 "nx": int(nx),
                 "ny": int(ny),
                 "basicAngle": 0,
@@ -107,7 +103,7 @@ try:
         }
     ]
 
-    print(f"Guardando {JSON_OUTPUT}...")
+    print(f"Escribiendo resultado en {JSON_OUTPUT}...")
     with open(JSON_OUTPUT, 'w') as f:
         json.dump(wind_data, f)
 
@@ -115,8 +111,8 @@ try:
         if os.path.exists(f):
             os.remove(f)
 
-    print("✅ Archivo ICON-EU 'viento-espana.json' generado correctamente.")
+    print("✅ ¡Exito! Archivo viento-espana.json generado.")
 
 except Exception as e:
-    print(f"❌ Error al procesar ICON-EU: {e}")
+    print(f"❌ Error durante la ejecucion: {e}")
     raise e
