@@ -1,0 +1,14 @@
+# Dependencias de Python para generar_viento_icon.py
+#
+# Instalar con:  pip install -r requirements.txt
+# En CI (ubuntu) hace falta además:  sudo apt-get install -y libeccodes-dev libeccodes-tools
+#
+# Los mínimos son los que usa el workflow hoy. Para una reproducibilidad
+# total, fija versiones exactas (p. ej. requests==2.32.3) y súbelas junto
+# con el workflow cuando compruebes que siguen funcionando.
+
+requests>=2.31
+numpy>=1.26
+xarray>=2024.1
+cfgrib>=0.9.12
+eccodes>=1.7
