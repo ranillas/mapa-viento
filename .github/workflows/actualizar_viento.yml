@@ -25,6 +25,9 @@ jobs:
         pip install --upgrade pip
         pip install requests xarray cfgrib eccodes numpy
 
+    - name: Probar la lógica de selección de corrida
+      run: python -m unittest test_icon_utils
+
     - name: Ejecutar script de extracción ICON-EU
       run: python generar_viento_icon.py
 

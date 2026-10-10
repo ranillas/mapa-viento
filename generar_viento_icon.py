@@ -6,7 +6,15 @@ import requests
 import numpy as np
 import xarray as xr
 
+from icon_utils import elegir_archivo_mas_reciente, run_stamp
+
 URL_BASE_NWP = "https://opendata.dwd.de/weather/nwp/icon-eu/grib"
+
+# Horas de inicialización de ICON-EU (UTC). Se recorren todas porque la hora
+# de la carpeta no dice qué corrida contiene: ver icon_utils.
+CORRIDAS = ["00", "03", "06", "09", "12", "15", "18", "21"]
+
+patron = r'href=["\']([^"\']+\.grib2\.bz2)["\']'
 
 def crear_sesion_http():
     session = requests.Session()
@@ -17,28 +25,37 @@ def crear_sesion_http():
     return session
 
 def obtener_url_dinamica(session, var_folder):
-    corridas = ["00", "03", "06", "09", "12", "15", "18", "21"]
-    
-    for corrida in reversed(corridas):
+    """Devuelve la URL del análisis (paso 000) más reciente de `var_folder`.
+
+    Antes se recorría sólo una carpeta y se salía en la primera que tuviera
+    ficheros. Eso servia la corrida más antigua cuando la carpeta de una
+    hora posterior aún guarda la del día anterior (medido el 2026-10-10:
+    carpeta 21 → corrida de 17,2 h; carpeta 00 → corrida de 14,2 h).
+    Ahora se recorren las ocho y se compara el sello fecha+hora del nombre.
+    """
+    mejores = []
+    for corrida in reversed(CORRIDAS):
         url_folder = f"{URL_BASE_NWP}/{corrida}/{var_folder}/"
         try:
             print(f"Escaneando carpeta DWD: {url_folder}")
             resp = session.get(url_folder, timeout=10)
-            if resp.status_code == 200:
-                patron = r'href=["\']([^"\']+\.grib2\.bz2)["\']'
-                archivos = re.findall(patron, resp.text, re.IGNORECASE)
-                
-                if archivos:
-                    archivos_paso0 = [f for f in archivos if "_000_" in f]
-                    archivo_elegido = archivos_paso0[0] if archivos_paso0 else archivos[0]
-                    
-                    url_completa = url_folder + archivo_elegido
-                    print(f"  -> ¡Archivo encontrado!: {archivo_elegido}")
-                    return url_completa
+            if resp.status_code != 200:
+                continue
+            archivos = re.findall(patron, resp.text, re.IGNORECASE)
+            elegido = elegir_archivo_mas_reciente(archivos)
+            if not elegido:
+                continue
+            mejores.append((run_stamp(elegido), elegido, url_folder + elegido))
         except Exception as e:
             print(f"  -> Error buscando en corrida {corrida}: {e}")
-            
-    raise RuntimeError(f"No se pudo encontrar ningún archivo válido en DWD para {var_folder}")
+
+    if not mejores:
+        raise RuntimeError(f"No se pudo encontrar ningún archivo válido en DWD para {var_folder}")
+
+    mejores.sort(key=lambda m: m[0])
+    sello, nombre, url = mejores[-1]
+    print(f"  -> ¡Archivo encontrado!: {nombre} (corrida {sello})")
+    return url
 
 def descargar_y_descomprimir(session, url, file_bz2, file_grib):
     print(f"Descargando {url}...")
