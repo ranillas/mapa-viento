@@ -1,0 +1,21 @@
+﻿# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Ficheros intermedios del script GRIB (se borran solos, esto es por si
+# el script se interrumpe a mitad)
+*.grib2
+*.grib2.bz2
+
+# Entornos locales
+.venv/
+venv/
+env/
+
+# Salida de herramientas
+.pytest_cache/
+.coverage
+dist/
+build/
